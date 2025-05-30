@@ -12,7 +12,7 @@ fn main() {
         .add_plugins(DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {
                 title: "Game Menu".into(),
-                resolution: (1280., 720.).into(),
+                resolution: (1920., 1080.).into(),
                 ..default()
             }),
             ..default()
@@ -26,7 +26,6 @@ fn main() {
             button_system,        // Handle menu button interactions
             update_boids,         // Update boid movement and flocking behavior
             draw_boids,          // Render boids with proper orientation and colors
-            bounce_boids,        // Handle screen wrapping for boids
             update_turrets,      // Turret targeting and laser creation
             update_lasers,       // Update laser beam positions and lengths
             apply_laser_damage,  // Apply damage to targeted boids
@@ -141,7 +140,7 @@ fn setup_menu(mut commands: Commands) {
                 })
                 .with_children(|parent| {
                     parent.spawn((
-                        Text::new("TITLE HERE"),
+                        Text::new("BOIDS"),
                         TextFont {
                             font_size: 72.0,
                             ..default()
@@ -244,7 +243,7 @@ fn setup_boids(
         
         // Start with varied but consistent velocities for natural movement
         let angle = rng.random_range(0.0..std::f32::consts::TAU);  // TAU = 2π
-        let speed = rng.random_range(300.0..500.0);
+        let speed = rng.random_range(100.0..300.0);
         let velocity = Vec2::new(angle.cos() * speed, angle.sin() * speed);
         
         commands.spawn((
@@ -256,37 +255,8 @@ fn setup_boids(
             },
             Transform::from_translation(position.extend(0.0)),  // Convert Vec2 to Vec3
         ));
-    }
+    }    
     
-    // Spawn special colored boids for visual variety
-    
-    // Single pink boid at specific position
-    commands.spawn((
-        Boid {
-            velocity: Vec2::new(rng.random_range(-150.0..150.0), rng.random_range(-150.0..150.0)),
-            acceleration: Vec2::ZERO,
-            health: 1.0,
-            damage_flash_timer: Timer::from_seconds(0.5, TimerMode::Once),
-        },
-        Transform::from_translation(Vec3::new(200.0, 100.0, 1.0)),  // Z=1.0 marks special boids
-    ));
-    
-    // Three red boids in bottom right corner
-    for i in 0..3 {
-        commands.spawn((
-            Boid {
-                velocity: Vec2::new(rng.random_range(-100.0..100.0), rng.random_range(-100.0..100.0)),
-                acceleration: Vec2::ZERO,
-                health: 1.0,
-                damage_flash_timer: Timer::from_seconds(0.1, TimerMode::Once),  // Faster flash
-            },
-            Transform::from_translation(Vec3::new(
-                window.width() / 2.0 - 100.0 - i as f32 * 30.0,  // Spaced 30px apart
-                -window.height() / 2.0 + 100.0,                   // Near bottom
-                1.0,                                               // Mark as special
-            )),
-        ));
-    }
 }
 
 /// Update boid movement using flocking algorithm (separation, alignment, cohesion)
@@ -314,13 +284,10 @@ fn update_boids(
         // Update damage flash timer
         boid.damage_flash_timer.tick(time.delta());
         
-        // Reset acceleration for this frame
-        boid.acceleration = Vec2::ZERO;
-        
         // ===== EDGE AVOIDANCE FORCE =====
         // Apply forces to keep boids away from screen edges with smooth curves
         let edge_margin = 150.0;     // Distance from edge where force starts
-        let edge_force = 300.0;      // Maximum force strength
+        let edge_force = 900.0;      // Maximum force strength
         
         // Right edge avoidance
         if pos.x > half_width - edge_margin {
@@ -355,7 +322,7 @@ fn update_boids(
         let mut neighbors = 0;
         
         let perception_radius = 100.0;  // How far boids can "see" each other
-        let max_speed = 600.0;          // Maximum movement speed
+        let max_speed = 300.0;          // Maximum movement speed
         let max_force = 400.0;          // Maximum steering force
         
         // Check all other boids for flocking interactions
@@ -398,27 +365,19 @@ fn update_boids(
             }
             if alignment.length() > 0.0 {
                 let desired = alignment.normalize() * max_speed;
-                alignment = (desired - boid.velocity) * 0.05;  // Gentle alignment
+                alignment = (desired - boid.velocity) * 1.0;  // Gentle alignment
             }
             if cohesion.length() > 0.0 {
                 let desired = cohesion.normalize() * max_speed;
-                cohesion = (desired - boid.velocity) * 0.02;  // Gentle cohesion
+                cohesion = (desired - boid.velocity) * 0.6;  // Gentle cohesion
             }
             
             // Apply forces with different weights for natural behavior
-            boid.acceleration += separation * 2.0;  // Separation is most important
+            boid.acceleration += separation * 1.0;  // Separation is most important
             boid.acceleration += alignment;         // Medium importance
             boid.acceleration += cohesion;          // Least important
         }
-        
-        // ===== WANDERING BEHAVIOR =====
-        // Add some randomness to prevent perfectly uniform movement
-        let wander_angle = time.elapsed_secs() * 2.0 + entity.index() as f32 * 0.5;
-        let wander_force = Vec2::new(
-            wander_angle.sin() * 20.0,
-            (wander_angle * 1.3).cos() * 20.0,  // Different frequency for Y
-        );
-        boid.acceleration += wander_force;
+    
         
         // ===== VELOCITY AND POSITION UPDATES =====
         // Apply acceleration to velocity with damping for smoother movement
@@ -432,44 +391,13 @@ fn update_boids(
             boid.velocity = boid.velocity.normalize_or_zero() * 100.0;
         }
         
-        // Apply velocity again (this appears to be duplicate code - could be optimized)
-        let delta_velocity = boid.acceleration * time.delta_secs();
-        boid.velocity += delta_velocity;
-        boid.velocity = boid.velocity.clamp_length_max(max_speed);
-        
         // Update position based on velocity
         transform.translation.x += boid.velocity.x * time.delta_secs();
         transform.translation.y += boid.velocity.y * time.delta_secs();
     }
 }
 
-/// Handle screen wrapping - boids that exit one side appear on the opposite side
-fn bounce_boids(
-    mut boids: Query<&mut Transform, With<Boid>>,
-    window_query: Query<&Window, With<PrimaryWindow>>,
-) {
-    let Ok(window) = window_query.single() else { return; };
-    let half_width = window.width() / 2.0;
-    let half_height = window.height() / 2.0;
-    
-    for mut transform in &mut boids {
-        // Horizontal wrapping
-        if transform.translation.x > half_width {
-            transform.translation.x = -half_width;
-        } else if transform.translation.x < -half_width {
-            transform.translation.x = half_width;
-        }
-        
-        // Vertical wrapping
-        if transform.translation.y > half_height {
-            transform.translation.y = -half_height;
-        } else if transform.translation.y < -half_height {
-            transform.translation.y = half_height;
-        }
-    }
-}
-
-/// Create and update visual representations of boids (triangular meshes)
+// / Create and update visual representations of boids (triangular meshes)
 fn draw_boids(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -579,7 +507,6 @@ fn setup_turrets(
     
     // Create meshes for turret components
     let turret_base = meshes.add(Rectangle::new(20.0, 20.0));      // Square base
-    let turret_barrel = meshes.add(Rectangle::new(4.0, 15.0));     // Rectangular barrel
     let turret_material = materials.add(ColorMaterial::from(Color::srgb(0.3, 0.3, 0.3)));  // Dark gray
     
     // Strategic turret positions for good map coverage
@@ -607,7 +534,6 @@ fn setup_turrets(
             .with_children(|parent| {
                 // Spawn turret barrel as child (rotates with targeting)
                 parent.spawn((
-                    Mesh2d(turret_barrel.clone()),
                     MeshMaterial2d(turret_material.clone()),
                     Transform::from_xyz(0.0, 10.0, 0.1),  // Offset forward from base
                 ));
@@ -621,12 +547,11 @@ fn update_turrets(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<ColorMaterial>>,
     mut turrets: Query<(Entity, &mut Turret, &Transform, &Children)>,
-    mut barrel_transforms: Query<&mut Transform, (Without<Turret>, Without<Boid>)>,  // Turret barrels
     boids: Query<(&Transform, Entity), (With<Boid>, Without<Turret>)>,
     existing_beams: Query<&LaserBeam>,
     time: Res<Time>,
 ) {
-    for (turret_entity, mut turret, turret_transform, children) in &mut turrets {
+    for (turret_entity, mut turret, turret_transform, _children) in &mut turrets {
         // Update targeting cooldown timer
         turret.cooldown_timer.tick(time.delta());
         
@@ -674,13 +599,6 @@ fn update_turrets(
                 // Calculate direction to target
                 let direction = (boid_transform.translation.truncate() - turret_transform.translation.truncate()).normalize();
                 let angle = direction.y.atan2(direction.x) - std::f32::consts::FRAC_PI_2;
-                
-                // Rotate turret barrel to face target
-                for child in children.iter() {
-                    if let Ok(mut barrel_transform) = barrel_transforms.get_mut(child) {
-                        barrel_transform.rotation = Quat::from_rotation_z(angle);
-                    }
-                }
                 
                 // Create laser beam if one doesn't exist for this turret
                 let has_beam = existing_beams.iter().any(|beam| beam.turret == turret_entity);
